@@ -1,32 +1,5 @@
 <?php
 
-/*
- *
- *  ____           _            __           _____
- * |  _ \    ___  (_)  _ __    / _|  _   _  |_   _|   ___    __ _   _ __ ___
- * | |_) |  / _ \ | | | '_ \  | |_  | | | |   | |    / _ \  / _` | | '_ ` _ \
- * |  _ <  |  __/ | | | | | | |  _| | |_| |   | |   |  __/ | (_| | | | | | | |
- * |_| \_\  \___| |_| |_| |_| |_|    \__, |   |_|    \___|  \__,_| |_| |_| |_|
- *                                   |___/
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * Zuri attempts to enforce "vanilla Minecraft" mechanics, as well as preventing
- * players from abusing weaknesses in Minecraft or its protocol, making your server
- * more safe. Organized in different sections, various checks are performed to test
- * players doing, covering a wide range including flying and speeding, fighting
- * hacks, fast block breaking and nukers, inventory hacks, chat spam and other types
- * of malicious behaviour.
- *
- * @author ReinfyTeam
- * @link https://github.com/ReinfyTeam/
- *
- *
- */
-
 declare(strict_types=1);
 
 namespace ReinfyTeam\Zuri;
@@ -42,109 +15,78 @@ use function array_filter;
 use function array_values;
 
 final class API {
-	private static ConfigManager $config;
+    private static ?ConfigManager $config = null;
+    private static ?array $moduleCache = null;
 
-	public static function getVersion() : string {
-		return self::getPluginInstance()->getDescription()->getVersion();
-	}
+    public static function getVersion(): string {
+        return self::getPluginInstance()->getDescription()->getVersion();
+    }
 
-	public static function getPlayer(string|Player $player) : ?PlayerAPI {
-		if ($player instanceof Player) {
-			return PlayerAPI::getAPIPlayer($player);
-		}
-		$found = Server::getInstance()->getPlayerExact($player);
-		return PlayerAPI::getAPIPlayer($found);
-	}
+    public static function getPlayer(string|Player $player): ?PlayerAPI {
+        $target = $player instanceof Player ? $player : Server::getInstance()->getPlayerExact($player);
+        return $target !== null ? PlayerAPI::getAPIPlayer($target) : null;
+    }
 
-	public static function getModule(string $name, string $subType) : ?Check {
-		foreach (ZuriAC::Checks() as $module) {
-			if ($module->getName() === $name && $module->getSubType() === $subType) {
-				return $module;
-			}
-		}
-		return null;
-	}
+    public static function getModule(string $name, string $subType): ?Check {
+        if (self::$moduleCache === null) {
+            self::buildModuleCache();
+        }
+        
+        return self::$moduleCache[$name][$subType] ?? null;
+    }
 
-	public static function getAllChecks(bool $includeSubChecks = true) : array {
-		if (!$includeSubChecks) {
-			$unique = [];
-			foreach (ZuriAC::Checks() as $module) {
-				$unique[$module->getName()] ??= $module;
-			}
-			return array_values($unique);
-		}
-		return ZuriAC::Checks();
-	}
+    private static function buildModuleCache(): void {
+        self::$moduleCache = [];
+        foreach (ZuriAC::getChecks() as $module) {
+            self::$moduleCache[$module->getName()][$module->getSubType()] = $module;
+        }
+    }
 
-	public static function getAllDisabledChecks(bool $includeSubChecks = true) : array {
-		return array_filter(
-			self::getAllChecks($includeSubChecks),
-			static fn(Check $module) => !$module->enable()
-		);
-	}
+    public static function getAllChecks(bool $includeSubChecks = true): array {
+        if ($includeSubChecks) {
+            return ZuriAC::getChecks();
+        }
+        
+        $unique = [];
+        foreach (ZuriAC::getChecks() as $module) {
+            $unique[$module->getName()] ??= $module;
+        }
+        return array_values($unique);
+    }
 
-	public static function getAllEnabledChecks(bool $includeSubChecks = true) : array {
-		return array_filter(
-			self::getAllChecks($includeSubChecks),
-			static fn(Check $module) => $module->enable()
-		);
-	}
+    public static function getAllDisabledChecks(bool $includeSubChecks = true): array {
+        return array_filter(
+            self::getAllChecks($includeSubChecks),
+            static fn(Check $module): bool => !$module->enable()
+        );
+    }
 
-	public static function getAllModules() : array {
-		return ZuriAC::Checks();
-	}
+    public static function getAllEnabledChecks(bool $includeSubChecks = true): array {
+        return array_filter(
+            self::getAllChecks($includeSubChecks),
+            static fn(Check $module): bool => $module->enable()
+        );
+    }
 
-	public static function getConfig() : ConfigManager {
-		return self::$config ??= new ConfigManager();
-	}
+    public static function getConfig(): ConfigManager {
+        return self::$config ??= new ConfigManager();
+    }
 
-	public static function allModuleInfo(string $name, string $subType) : ?array {
-		$module = self::getModule($name, $subType);
-		if ($module === null) {
-			return null;
-		}
+    public static function getModuleInfo(string $name, string $subType): ?array {
+        $module = self::getModule($name, $subType);
+        return $module !== null ? [
+            'name' => $module->getName(),
+            'subType' => $module->getSubType(),
+            'punishment' => $module->getPunishment(),
+            'maxViolations' => $module->maxViolations()
+        ] : null;
+    }
 
-		return [
-			"name" => $module->getName(),
-			"subType" => $module->getSubType(),
-			"punishment" => $module->getPunishment(),
-			"maxViolations" => $module->maxViolations()
-		];
-	}
+    public static function getPluginInstance(): ZuriAC {
+        return ZuriAC::getInstance();
+    }
 
-
-	private static function getModuleInfoField(string $name, string $field) : mixed {
-		$info = self::allModulesInfo();
-		return $info[$name][$field] ?? null;
-	}
-
-	public static function getModule(string $name, string $subType) : ?Check {
-		$matches = array_values(array_filter(
-			ZuriAC::Checks(),
-			static fn(Check $module) : bool =>
-				$module->getName() === $name && $module->getSubType() === $subType
-		));
-		return $matches[0] ?? null;
-	}
-
-
-	public static function getSubTypeByModule(string $name) : ?string {
-		return self::getModuleInfoField($name, "subType");
-	}
-
-	public static function getMaxViolationByModule(string $name) : ?int {
-		return self::getModuleInfoField($name, "maxViolations");
-	}
-
-	public static function getPunishmentByModule(string $name) : ?array {
-		return self::getModuleInfoField($name, "punishment");
-	}
-
-	public static function getPluginInstance() : ZuriAC {
-		return ZuriAC::getInstance();
-	}
-
-	public static function getDiscordWebhookConfig() : Config {
-		return Discord::getWebhookConfig();
-	}
+    public static function getDiscordWebhookConfig(): Config {
+        return Discord::getWebhookConfig();
+    }
 }
